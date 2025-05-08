@@ -1,0 +1,128 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
+import json
+
+USERS_FILE = "users.json"
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_users(users):
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f)
+
+class LoginRegisterWindow:
+    def __init__(music, root, on_success):
+        music.root = root
+        music.on_success = on_success
+        music.root.title("Login/Register")
+        music.root.geometry("300x200")
+
+        music.users = load_users()
+
+        music.frame = tk.Frame(root)
+        music.frame.pack(pady=20)
+
+        tk.Label(music.frame, text="Username").grid(row=0, column=0, pady=5)
+        music.username_entry = tk.Entry(music.frame)
+        music.username_entry.grid(row=0, column=1, pady=5)
+
+        tk.Label(music.frame, text="Password").grid(row=1, column=0, pady=5)
+        music.password_entry = tk.Entry(music.frame, show="*")
+        music.password_entry.grid(row=1, column=1, pady=5)
+
+        tk.Button(music.frame, text="Login", command=music.login).grid(row=2, column=0, pady=10)
+        tk.Button(music.frame, text="Register", command=music.register).grid(row=2, column=1, pady=10)
+
+    def login(music):
+        username = music.username_entry.get()
+        password = music.password_entry.get()
+        if username in music.users and music.users[username] == password:
+            music.root.destroy()
+            music.on_success(username)
+        else:
+            messagebox.showerror("Error", "Invalid username or password")
+
+    def register(music):
+        username = music.username_entry.get()
+        password = music.password_entry.get()
+        if username in music.users:
+            messagebox.showerror("Error", "Username already exists")
+        else:
+            music.users[username] = password
+            save_users(music.users)
+            messagebox.showinfo("Success", "User registered successfully")
+
+class MusicPlaylistManager:
+    def __init__(music, root, username):
+        music.root = root
+        music.root.title(f"Music Playlist Manager - {username}")
+        music.root.geometry("500x400")
+        music.root.config(bg="#1e1e2f")
+
+        music.username = username
+        music.playlist = []
+
+        music.title = tk.Label(root, text=f"{username}'s Playlist", font=("Helvetica", 16, "bold"), fg="white", bg="#1e1e2f")
+        music.title.pack(pady=10)
+
+        music.listbox = tk.Listbox(root, selectmode=tk.SINGLE, bg="#2e2e3f", fg="white", width=50, height=15)
+        music.listbox.pack(pady=10)
+        
+        # Add song entry frame
+        music.entry_frame = tk.Frame(root, bg="#1e1e2f")
+        music.entry_frame.pack(pady=5)
+        
+        tk.Label(music.entry_frame, text="Song Name:", fg="white", bg="#1e1e2f").pack(side=tk.LEFT, padx=5)
+        music.song_entry = tk.Entry(music.entry_frame, width=30, bg="#2e2e3f", fg="white")
+        music.song_entry.pack(side=tk.LEFT, padx=5)
+
+        music.button_frame = tk.Frame(root, bg="#1e1e2f")
+        music.button_frame.pack(pady=10)
+
+        music.add_button = tk.Button(music.button_frame, text="Add Song", width=15, command=music.add_song, bg="#4caf50", fg="white")
+        music.add_button.grid(row=0, column=0, padx=5)
+
+        music.delete_button = tk.Button(music.button_frame, text="Delete Song", width=15, command=music.delete_song, bg="#f44336", fg="white")
+        music.delete_button.grid(row=0, column=1, padx=5)
+
+        music.save_button = tk.Button(root, text="Save Playlist", width=35, command=music.save_playlist, bg="#2196f3", fg="white")
+        music.save_button.pack(pady=10)
+
+    def add_song(music):
+        # Option to add song by typing name directly
+        song_name = music.song_entry.get()
+        if song_name:
+            music.playlist.append(song_name)
+            music.listbox.insert(tk.END, song_name)
+            music.song_entry.delete(0, tk.END)
+        # Or keep option to select a file
+        else:
+            file_path = filedialog.askopenfilename(filetypes=[("MP3 Files", "*.mp3"), ("All Files", "*.*")])
+            if file_path:
+                song_name = os.path.basename(file_path)
+                music.playlist.append(song_name)
+                music.listbox.insert(tk.END, song_name)
+
+    def delete_song(music):
+        selected_index = music.listbox.curselection()
+        if selected_index:
+            music.listbox.delete(selected_index)
+            del music.playlist[selected_index[0]]
+
+    def save_playlist(music):
+        save_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+        if save_path:
+            with open(save_path, 'w') as f:
+                json.dump(music.playlist, f)
+            messagebox.showinfo("Success", "Playlist saved successfully!")
+
+if __name__ == "__main__":
+    def start_main_app(username):
+        main_root = tk.Tk()
+        app = MusicPlaylistManager(main_root, username)
+   
