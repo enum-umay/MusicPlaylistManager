@@ -7,7 +7,7 @@ import random
 import sqlite3
 import psycopg2
 
-# Modern color palette inspired by Spotify
+# color nga lami
 COLORS = {
     "bg_dark": "#121212",
     "bg_medium": "#181818",
