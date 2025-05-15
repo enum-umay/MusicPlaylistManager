@@ -5,6 +5,7 @@ import json
 import datetime as dt
 import random
 import sqlite3
+import psycopg2
 
 # Modern color palette inspired by Spotify
 COLORS = {
@@ -358,7 +359,7 @@ class ModernSpotifyApp:
                               bg=COLORS["bg_dark"],
                               cursor="hand2")
         login_link.pack(pady=(10, 0))
-        login_link.bind("<Button-1>", self.create_login_screen)
+        login_link.bind("<Button-1>", lambda e: self.create_login_screen())
 
     def attempt_signup(self):
         username = self.signup_username_entry.get()
@@ -450,7 +451,6 @@ class ModernSpotifyApp:
             def create_nav_handler(cmd):
                 def handler(event):
                     cmd()
-
                 return handler
 
             nav_handler = create_nav_handler(command)
@@ -689,7 +689,6 @@ class ModernSpotifyApp:
             def create_playlist_opener(pl_id, pl_name):
                 def open_playlist(event):
                     self.show_playlist_view(pl_id, pl_name)
-
                 return open_playlist
 
             card_frame.bind("<Button-1>", create_playlist_opener(playlist_id, playlist_name))
@@ -740,343 +739,525 @@ class ModernSpotifyApp:
         self.results_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
     def perform_search(self):
-        """Search for songs based on user input"""
+        """Search for songs and display results"""
+        query = self.search_entry.get()
+
+        if not query:
+            return
+
         # Clear previous results
         for widget in self.results_frame.winfo_children():
             widget.destroy()
 
-        query = self.search_entry.get()
-
-        if not query:
-            # Nothing to search for
-            return
-
-        # Perform search in database
+        # Search for songs
         results = self.db_manager.search_songs(query)
 
-        if not results:
-            no_results_label = tk.Label(self.results_frame,
-                                        text="No songs found matching your search",
-                                        font=self.font_bold,
-                                        fg=COLORS["text_secondary"],
-                                        bg=COLORS["bg_dark"])
-            no_results_label.pack(pady=20)
-            return
+        # Display results header
+        results_title = tk.Label(self.results_frame,
+                                text=f"Search Results for '{query}'",
+                             font=("Inter", 16, "bold"),
+                             fg=COLORS["text_primary"],
+                             bg=COLORS["bg_dark"])
+        results_title.pack(anchor="w", pady=(0, 10))
 
-        # Display search results
-        results_table = ttk.Treeview(self.results_frame, columns=("title", "artist", "album"),
-                                     show="headings", selectmode="browse")
-        results_table.heading("title", text="Title")
-        results_table.heading("artist", text="Artist")
-        results_table.heading("album", text="Album")
+        # Create table header
+        header_frame = tk.Frame(self.results_frame, bg=COLORS["bg_dark"])
+        header_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Configure column widths
-        results_table.column("title", width=250)
-        results_table.column("artist", width=200)
-        results_table.column("album", width=200)
+        columns = ["Title", "Artist", "Album", "Actions"]
+        widths = [3, 2, 2, 1]
 
-        # Add a scrollbar
-        scrollbar = ttk.Scrollbar(self.results_frame, orient="vertical", command=results_table.yview)
-        results_table.configure(yscrollcommand=scrollbar.set)
+        for i, col in enumerate(columns):
+            col_frame = tk.Frame(header_frame, bg=COLORS["bg_dark"])
+            col_frame.pack(side=tk.LEFT, fill=tk.X, expand=widths[i])
 
-        # Pack the table and scrollbar
-        results_table.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+            tk.Label(col_frame,
+                text=col,
+                font=self.font_bold,
+                fg=COLORS["accent"],
+                bg=COLORS["bg_dark"]).pack(anchor="w")
 
-        # Add search results to table
+        # Create scrollable results container
+        results_container = tk.Frame(self.results_frame, bg=COLORS["bg_dark"])
+        results_container.pack(fill=tk.BOTH, expand=True)
+
+        # Add rows for each result
         for song_id, title, artist, album in results:
-            results_table.insert("", "end", iid=song_id, values=(title, artist, album))
+            row_frame = tk.Frame(results_container, bg=COLORS["bg_medium"])
+            row_frame.pack(fill=tk.X, pady=2)
 
-        # Double-click to add song to playlist
-        results_table.bind("<Double-1>", lambda event: self.prompt_add_to_playlist(results_table.selection()[0]))
+            # Title column
+            title_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            title_frame.pack(side=tk.LEFT, fill=tk.X, expand=3)
 
-    def prompt_add_to_playlist(self, song_id):
-        """Prompt user to select a playlist to add the song to"""
+            tk.Label(title_frame,
+                text=title,
+                font=self.font_family,
+                fg=COLORS["text_primary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
+
+            # Artist column
+            artist_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            artist_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
+
+            tk.Label(artist_frame,
+                text=artist,
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
+
+            # Album column
+            album_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            album_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
+
+            tk.Label(album_frame,
+                text=album or "Unknown",
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
+
+            # Actions column
+            actions_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            actions_frame.pack(side=tk.LEFT, fill=tk.X, expand=1)
+
+            add_button = tk.Button(actions_frame,
+                              text="Add to Playlist",
+                              font=self.font_family,
+                              bg=COLORS["accent"],
+                              fg=COLORS["text_primary"],
+                              relief=tk.FLAT,
+                              command=lambda sid=song_id: self.add_to_playlist_dialog(sid))
+            add_button.pack(padx=5, pady=5)
+
+        # Show "No results found" message if no matches
+        if not results:
+            no_results = tk.Label(results_container,
+                             text="No songs found matching your search",
+                             font=self.font_family,
+                             fg=COLORS["text_secondary"],
+                             bg=COLORS["bg_dark"])
+            no_results.pack(pady=20)
+
+    def add_to_playlist_dialog(self, song_id):
+        """Show dialog to add a song to a playlist"""
         # Get user's playlists
         playlists = self.db_manager.get_user_playlists(self.current_user)
 
         if not playlists:
-            messagebox.showinfo("No Playlists", "Please create a playlist first")
+            messagebox.showinfo("No Playlists", "You don't have any playlists yet. Create one first!")
             return
 
-        # Create dialog window
+        # Create a simple dialog
         dialog = tk.Toplevel(self.root)
         dialog.title("Add to Playlist")
-        dialog.geometry("300x400")
-        dialog.configure(bg=COLORS["bg_medium"])
+        dialog.geometry("300x300")
+        dialog.configure(bg=COLORS["bg_dark"])
 
-        # Header
-        header = tk.Label(dialog,
-                          text="Select a playlist",
-                          font=self.font_bold,
-                          fg=COLORS["text_primary"],
-                          bg=COLORS["bg_medium"])
-        header.pack(pady=10)
+        # Make dialog modal
+        dialog.transient(self.root)
+        dialog.grab_set()
 
-        # Playlists listbox
+        # Heading
+        tk.Label(dialog,
+            text="Select a Playlist",
+            font=self.font_bold,
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_dark"]).pack(pady=10)
+
+        # Create a listbox with playlists
         playlist_listbox = tk.Listbox(dialog,
-                                      bg=COLORS["bg_light"],
-                                      fg=COLORS["text_primary"],
-                                      font=self.font_family,
-                                      selectbackground=COLORS["accent"],
-                                      relief=tk.FLAT)
-        playlist_listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                                 bg=COLORS["bg_light"],
+                                 fg=COLORS["text_primary"],
+                                 font=self.font_family,
+                                 selectbackground=COLORS["accent"],
+                                 relief=tk.FLAT,
+                                 width=40,
+                                 height=10)
+        playlist_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
         # Add playlists to listbox
+        playlist_ids = []
         for playlist_id, playlist_name in playlists:
-            playlist_listbox.insert(tk.END, f"{playlist_id}:{playlist_name}")
+            playlist_listbox.insert(tk.END, playlist_name)
+            playlist_ids.append(playlist_id)
 
         # Add button
-        def add_song():
-            selection = playlist_listbox.curselection()
-            if selection:
-                selected_playlist = playlist_listbox.get(selection[0])
-                playlist_id = int(selected_playlist.split(":")[0])
-
-                # Add song to playlist
-                if self.db_manager.add_song_to_playlist(playlist_id, song_id):
-                    messagebox.showinfo("Success", "Song added to playlist")
-                else:
-                    messagebox.showinfo("Info", "Song already in playlist")
-
-                dialog.destroy()
-
         add_button = tk.Button(dialog,
-                               text="Add to Playlist",
-                               font=self.font_bold,
-                               bg=COLORS["accent"],
-                               fg=COLORS["text_primary"],
-                               activebackground=COLORS["accent_hover"],
-                               command=add_song)
-        add_button.pack(fill=tk.X, padx=10, pady=(0, 10))
+                          text="Add to Selected Playlist",
+                          font=self.font_family,
+                          bg=COLORS["accent"],
+                          fg=COLORS["text_primary"],
+                          relief=tk.FLAT,
+                          command=lambda: self.add_song_to_playlist(dialog, playlist_ids[playlist_listbox.curselection()[0]], song_id) if playlist_listbox.curselection() else None)
+        add_button.pack(pady=10, padx=10, fill=tk.X)
+
+    def add_song_to_playlist(self, dialog, playlist_id, song_id):
+        """Add a song to the selected playlist"""
+        if self.db_manager.add_song_to_playlist(playlist_id, song_id):
+            messagebox.showinfo("Success", "Song added to playlist!")
+        else:
+            messagebox.showinfo("Info", "This song is already in the playlist.")
+
+        dialog.destroy()
 
     def show_library_view(self):
-        """Display the user's music library"""
+        """Display the user's library with all their songs"""
         # Clear previous content
         for widget in self.main_content_frame.winfo_children():
             widget.destroy()
 
         # Library header
-        library_header = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
-        library_header.pack(fill=tk.X, padx=20, pady=20)
+        library_label = tk.Label(self.main_content_frame,
+                            text="Your Library",
+                            font=("Inter", 24, "bold"),
+                            fg=COLORS["text_primary"],
+                            bg=COLORS["bg_dark"])
+        library_label.pack(anchor="w", padx=20, pady=20)
 
-        header_label = tk.Label(library_header,
-                                text="Your Library",
-                                font=("Inter", 24, "bold"),
-                                fg=COLORS["text_primary"],
-                                bg=COLORS["bg_dark"])
-        header_label.pack(side=tk.LEFT)
+        # Tabs for different library views
+        tabs_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
+        tabs_frame.pack(fill=tk.X, padx=20)
 
-        # Import button
-        import_button = tk.Button(library_header,
-                                  text="Import Music",
-                                  font=self.font_bold,
-                                  bg=COLORS["accent"],
-                                  fg=COLORS["text_primary"],
-                                  command=self.import_music)
-        import_button.pack(side=tk.RIGHT)
+        # Tabs
+        tabs = [
+            ("All Songs", self.show_all_songs_tab),
+            ("Recently Added", self.show_recent_tab),
+            ("Most Played", self.show_most_played_tab)
+        ]
 
-        # Songs table
-        library_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
-        library_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        for i, (tab_name, tab_command) in enumerate(tabs):
+            tab_button = tk.Button(tabs_frame,
+                              text=tab_name,
+                              font=self.font_bold,
+                              bg=COLORS["bg_light"] if i == 0 else COLORS["bg_dark"],
+                              fg=COLORS["text_primary"] if i == 0 else COLORS["text_secondary"],
+                              bd=0,
+                              relief=tk.FLAT,
+                              padx=15,
+                              pady=5,
+                              command=tab_command)
+            tab_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Content frame for tab content
+        self.library_content_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
+        self.library_content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Show all songs by default
+        self.show_all_songs_tab()
+
+    def show_all_songs_tab(self):
+        """Show all songs in the library"""
+        # Clear previous content
+        for widget in self.library_content_frame.winfo_children():
+            widget.destroy()
 
         # Get all user's songs
         songs = self.db_manager.get_all_user_songs(self.current_user)
 
-        # Create table
-        columns = ("title", "artist", "album")
-        library_table = ttk.Treeview(library_frame, columns=columns,
-                                     show="headings", selectmode="browse")
+        # Create table header
+        header_frame = tk.Frame(self.library_content_frame, bg=COLORS["bg_dark"])
+        header_frame.pack(fill=tk.X, pady=(0, 10))
 
-        library_table.heading("title", text="Title")
-        library_table.heading("artist", text="Artist")
-        library_table.heading("album", text="Album")
+        columns = ["Title", "Artist", "Album", "Actions"]
+        widths = [3, 2, 2, 1]
 
-        # Configure column widths
-        library_table.column("title", width=250)
-        library_table.column("artist", width=200)
-        library_table.column("album", width=200)
+        for i, col in enumerate(columns):
+            col_frame = tk.Frame(header_frame, bg=COLORS["bg_dark"])
+            col_frame.pack(side=tk.LEFT, fill=tk.X, expand=widths[i])
 
-        # Add a scrollbar
-        y_scrollbar = ttk.Scrollbar(library_frame, orient="vertical", command=library_table.yview)
-        library_table.configure(yscrollcommand=y_scrollbar.set)
+            tk.Label(col_frame,
+                text=col,
+                font=self.font_bold,
+                fg=COLORS["accent"],
+                bg=COLORS["bg_dark"]).pack(anchor="w")
 
-        # Pack the table and scrollbar
-        library_table.pack(side="left", fill="both", expand=True)
-        y_scrollbar.pack(side="right", fill="y")
+        # Create scrollable results container
+        songs_container = tk.Frame(self.library_content_frame, bg=COLORS["bg_dark"])
+        songs_container.pack(fill=tk.BOTH, expand=True)
 
-        # Add songs to table
+        # Add rows for each song
         for song_id, title, artist, album in songs:
-            library_table.insert("", "end", iid=song_id, values=(title, artist, album))
+            row_frame = tk.Frame(songs_container, bg=COLORS["bg_medium"])
+            row_frame.pack(fill=tk.X, pady=2)
 
-        # Double-click to add song to playlist
-        library_table.bind("<Double-1>", lambda event: self.prompt_add_to_playlist(library_table.selection()[0]))
+            # Title column
+            title_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            title_frame.pack(side=tk.LEFT, fill=tk.X, expand=3)
 
-    def import_music(self):
-        """Import music files into the library"""
-        # File dialog to select music files
-        filetypes = (
-            ('Audio Files', '*.mp3;*.wav;*.ogg;*.flac'),
-            ('All files', '*.*')
-        )
+            tk.Label(title_frame,
+                text=title,
+                font=self.font_family,
+                fg=COLORS["text_primary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
 
-        files = filedialog.askopenfilenames(
-            title='Select music files',
-            filetypes=filetypes
-        )
+            # Artist column
+            artist_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            artist_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
 
-        if not files:
-            return
+            tk.Label(artist_frame,
+                text=artist,
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
 
-        # Process each selected file
-        for file_path in files:
-            # Get file name without extension
-            file_name = os.path.basename(file_path)
-            name_without_ext = os.path.splitext(file_name)[0]
+            # Album column
+            album_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            album_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
 
-            # Try to extract artist and title
-            parts = name_without_ext.split(' - ', 1)
+            tk.Label(album_frame,
+                text=album or "Unknown",
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_medium"]).pack(anchor="w", padx=5, pady=5)
 
-            if len(parts) > 1:
-                artist, title = parts
-            else:
-                title = name_without_ext
-                artist = "Unknown Artist"
+            # Actions column
+            actions_frame = tk.Frame(row_frame, bg=COLORS["bg_medium"])
+            actions_frame.pack(side=tk.LEFT, fill=tk.X, expand=1)
 
-            # Add song to database
-            self.db_manager.add_song(title, artist, "Unknown Album", file_path)
+            # Play button
+            play_button = tk.Button(actions_frame,
+                               text="Play",
+                               font=self.font_family,
+                               bg=COLORS["accent"],
+                               fg=COLORS["text_primary"],
+                               relief=tk.FLAT,
+                               command=lambda s=title: self.play_song_demo(s))
+            play_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-        messagebox.showinfo("Import Successful", f"{len(files)} music files have been imported")
+        # Show "No songs" message if library is empty
+        if not songs:
+            no_songs = tk.Label(songs_container,
+                           text="Your library is empty. Add songs to get started!",
+                           font=self.font_family,
+                           fg=COLORS["text_secondary"],
+                           bg=COLORS["bg_dark"])
+            no_songs.pack(pady=20)
 
-        # Refresh library view if that's the current view
-        self.show_library_view()
+    def show_recent_tab(self):
+        """Show recently added songs (stub)"""
+        # Clear previous content
+        for widget in self.library_content_frame.winfo_children():
+            widget.destroy()
+
+        # Placeholder message
+        tk.Label(self.library_content_frame,
+            text="Coming Soon: Recently Added Songs",
+            font=self.font_bold,
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_dark"]).pack(pady=50)
+
+    def show_most_played_tab(self):
+        """Show most played songs (stub)"""
+        # Clear previous content
+        for widget in self.library_content_frame.winfo_children():
+            widget.destroy()
+
+        # Placeholder message
+        tk.Label(self.library_content_frame,
+            text="Coming Soon: Most Played Songs",
+            font=self.font_bold,
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_dark"]).pack(pady=50)
 
     def show_playlist_view(self, playlist_id, playlist_name):
-        """Show the contents of a specific playlist"""
+        """Display a specific playlist and its songs"""
         # Clear previous content
         for widget in self.main_content_frame.winfo_children():
             widget.destroy()
 
-        # Playlist header
-        playlist_header = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
-        playlist_header.pack(fill=tk.X, padx=20, pady=20)
-
-        header_label = tk.Label(playlist_header,
-                                text=playlist_name,
-                                font=("Inter", 24, "bold"),
-                                fg=COLORS["text_primary"],
-                                bg=COLORS["bg_dark"])
-        header_label.pack(side=tk.LEFT)
-
-        # Songs frame
-        songs_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
-        songs_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
-
         # Get songs in playlist
         songs = self.db_manager.get_playlist_songs(playlist_id)
 
+        # Playlist header section
+        header_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
+        header_frame.pack(fill=tk.X, padx=20, pady=20)
+
+        # Playlist image placeholder
+        image_frame = tk.Frame(header_frame,
+                          bg=COLORS["bg_light"],
+                          width=200,
+                          height=200)
+        image_frame.pack(side=tk.LEFT, padx=(0, 20))
+        image_frame.pack_propagate(False)
+
+        # Playlist icon
+        playlist_icon = tk.Label(image_frame,
+                            text="🎵",
+                            font=("Segoe UI Emoji", 64),
+                            bg=COLORS["bg_light"],
+                            fg=COLORS["accent"])
+        playlist_icon.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Playlist info
+        info_frame = tk.Frame(header_frame, bg=COLORS["bg_dark"])
+        info_frame.pack(side=tk.LEFT)
+
+        # Playlist type label
+        tk.Label(info_frame,
+            text="PLAYLIST",
+            font=self.font_bold,
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 5))
+
+        # Playlist name
+        tk.Label(info_frame,
+            text=playlist_name,
+            font=("Inter", 32, "bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 10))
+
+        # Song count & creator
+        tk.Label(info_frame,
+            text=f"{len(songs)} songs • Created by {self.current_user}",
+            font=self.font_family,
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_dark"]).pack(anchor="w")
+
+        # Action buttons
+        buttons_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
+        buttons_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        # Play button
+        play_button = tk.Button(buttons_frame,
+                           text="▶ Play",
+                           font=self.font_bold,
+                           bg=COLORS["accent"],
+                           fg=COLORS["text_primary"],
+                           relief=tk.FLAT,
+                           padx=30,
+                           pady=10,
+                           command=lambda: self.play_song_demo(playlist_name))
+        play_button.pack(side=tk.LEFT)
+
+        # Add song button
+        add_button = tk.Button(buttons_frame,
+                          text="+ Add Songs",
+                          font=self.font_family,
+                          bg=COLORS["bg_light"],
+                          fg=COLORS["text_primary"],
+                          relief=tk.FLAT,
+                          padx=20,
+                          pady=10,
+                          command=lambda: self.show_search_view())
+        add_button.pack(side=tk.LEFT, padx=10)
+
+        # Songs listing
+        songs_frame = tk.Frame(self.main_content_frame, bg=COLORS["bg_dark"])
+        songs_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Table header
+        header_frame = tk.Frame(songs_frame, bg=COLORS["bg_dark"])
+        header_frame.pack(fill=tk.X, pady=(0, 10))
+
+        columns = ["#", "Title", "Artist", "Album", "Actions"]
+        widths = [1, 3, 2, 2, 1]
+
+        for i, col in enumerate(columns):
+            col_frame = tk.Frame(header_frame, bg=COLORS["bg_dark"])
+            col_frame.pack(side=tk.LEFT, fill=tk.X, expand=widths[i])
+
+            tk.Label(col_frame,
+                text=col,
+                font=self.font_bold,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_dark"]).pack(anchor="w")
+
+        # Songs list
+        for i, (song_id, title, artist, album) in enumerate(songs):
+            row_frame = tk.Frame(songs_frame, bg=COLORS["bg_dark"])
+            row_frame.pack(fill=tk.X, pady=2)
+
+            # Number column
+            num_frame = tk.Frame(row_frame, bg=COLORS["bg_dark"])
+            num_frame.pack(side=tk.LEFT, fill=tk.X, expand=1)
+
+            tk.Label(num_frame,
+                text=str(i+1),
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_dark"]).pack(anchor="w", padx=5, pady=5)
+
+            # Title column
+            title_frame = tk.Frame(row_frame, bg=COLORS["bg_dark"])
+            title_frame.pack(side=tk.LEFT, fill=tk.X, expand=3)
+
+            tk.Label(title_frame,
+                text=title,
+                font=self.font_family,
+                fg=COLORS["text_primary"],
+                bg=COLORS["bg_dark"]).pack(anchor="w", padx=5, pady=5)
+
+            # Artist column
+            artist_frame = tk.Frame(row_frame, bg=COLORS["bg_dark"])
+            artist_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
+
+            tk.Label(artist_frame,
+                text=artist,
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_dark"]).pack(anchor="w", padx=5, pady=5)
+
+            # Album column
+            album_frame = tk.Frame(row_frame, bg=COLORS["bg_dark"])
+            album_frame.pack(side=tk.LEFT, fill=tk.X, expand=2)
+
+            tk.Label(album_frame,
+                text=album or "Unknown",
+                font=self.font_family,
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_dark"]).pack(anchor="w", padx=5, pady=5)
+
+            # Actions column
+            actions_frame = tk.Frame(row_frame, bg=COLORS["bg_dark"])
+            actions_frame.pack(side=tk.LEFT, fill=tk.X, expand=1)
+
+            # Remove button
+            remove_button = tk.Button(actions_frame,
+                                 text="Remove",
+                                 font=self.font_family,
+                                 bg=COLORS["bg_light"],
+                                 fg=COLORS["text_primary"],
+                                 relief=tk.FLAT,
+                                 command=lambda pid=playlist_id, sid=song_id, pname=playlist_name: self.remove_song_from_playlist(pid, sid, pname))
+            remove_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        # Show "Empty playlist" message if no songs
         if not songs:
-            empty_label = tk.Label(songs_frame,
-                                   text="This playlist is empty. Add songs from your library or search.",
-                                   font=self.font_bold,
-                                   fg=COLORS["text_secondary"],
-                                   bg=COLORS["bg_dark"])
-            empty_label.pack(pady=20)
-            return
+            no_songs = tk.Label(songs_frame,
+                           text="This playlist is empty. Add some songs!",
+                           font=self.font_family,
+                           fg=COLORS["text_secondary"],
+                           bg=COLORS["bg_dark"])
+            no_songs.pack(pady=20)
 
-        # Create table for songs
-        columns = ("title", "artist", "album")
-        songs_table = ttk.Treeview(songs_frame, columns=columns,
-                                   show="headings", selectmode="browse")
+    def remove_song_from_playlist(self, playlist_id, song_id, playlist_name):
+        """Remove a song from a playlist"""
+        if messagebox.askyesno("Confirm", "Remove this song from the playlist?"):
+            if self.db_manager.remove_song_from_playlist(playlist_id, song_id):
+                messagebox.showinfo("Success", "Song removed from playlist")
+                # Refresh playlist view
+                self.show_playlist_view(playlist_id, playlist_name)
+            else:
+                messagebox.showerror("Error", "Failed to remove song")
 
-        songs_table.heading("title", text="Title")
-        songs_table.heading("artist", text="Artist")
-        songs_table.heading("album", text="Album")
-
-        # Configure column widths
-        songs_table.column("title", width=250)
-        songs_table.column("artist", width=200)
-        songs_table.column("album", width=200)
-
-        # Add a scrollbar
-        y_scrollbar = ttk.Scrollbar(songs_frame, orient="vertical", command=songs_table.yview)
-        songs_table.configure(yscrollcommand=y_scrollbar.set)
-
-        # Pack the table and scrollbar
-        songs_table.pack(side="left", fill="both", expand=True)
-        y_scrollbar.pack(side="right", fill="y")
-
-        # Add songs to table
-        for song_id, title, artist, album in songs:
-            songs_table.insert("", "end", iid=song_id, values=(title, artist, album))
-
-        # Add right-click menu for removing songs
-        context_menu = tk.Menu(songs_table, tearoff=0)
-        context_menu.add_command(label="Remove from playlist",
-                                 command=lambda: self.remove_song_from_playlist(playlist_id,
-                                                                                songs_table.selection()[0]))
-
-        def show_context_menu(event):
-            if songs_table.selection():
-                context_menu.post(event.x_root, event.y_root)
-
-        songs_table.bind("<Button-3>", show_context_menu)
-
-    def remove_song_from_playlist(self, playlist_id, song_id):
-        """Remove selected song from the playlist"""
-        if self.db_manager.remove_song_from_playlist(playlist_id, song_id):
-            # Refresh playlist view
-            self.show_playlist_view(playlist_id, self.get_playlist_name(playlist_id))
-        else:
-            messagebox.showerror("Error", "Failed to remove song from playlist")
-
-    def get_playlist_name(self, playlist_id):
-        """Get name of playlist by ID"""
-        playlists = self.db_manager.get_user_playlists(self.current_user)
-        for pl_id, pl_name in playlists:
-            if pl_id == playlist_id:
-                return pl_name
-        return "Unknown Playlist"
+    def play_song_demo(self, song_name):
+        """Simulated play function (just shows a message)"""
+        messagebox.showinfo("Playing", f"Now playing: {song_name}\n\n(Playback functionality would be implemented here in a real app)")
 
     def get_time_of_day(self):
-        """Return appropriate greeting based on time of day"""
+        """Return a greeting based on time of day"""
         hour = dt.datetime.now().hour
 
-        if 5 <= hour < 12:
+        if hour < 12:
             return "Morning"
-        elif 12 <= hour < 18:
+        elif hour < 18:
             return "Afternoon"
         else:
             return "Evening"
 
-    if __name__ == "__main__":
-        root =  tk.Tk()
-        app = ModernSpotifyApp(root)
 
-        # Custom styling for ttk widgets
-        style = ttk.Style()
-        style.theme_use('clam')
-
-        # Configure Treeview colors
-        style.configure("Treeview",
-                        background=COLORS["bg_light"],
-                        foreground=COLORS["text_primary"],
-                        rowheight=25,
-                        fieldbackground=COLORS["bg_light"])
-
-        style.configure("Treeview.Heading",
-                        background=COLORS["bg_medium"],
-                        foreground=COLORS["text_primary"],
-                        relief="flat")
-
-        style.map("Treeview",
-                  background=[('selected', COLORS["accent"])])
-
-        # Configure Scrollbar style
-        style.configure("Vertical.TScrollbar",
-                        background=COLORS["bg_medium"],
-                        troughcolor=COLORS["bg_dark"],
-                        arrowcolor=COLORS["text_secondary"])
-
-        # Start the application
-        root.mainloop()
+# Run the application
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ModernSpotifyApp(root)
+    root.mainloop()
